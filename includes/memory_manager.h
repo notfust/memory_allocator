@@ -6,4 +6,7 @@
 #ifndef MEMORY_MANAGER_H_
 #define MEMORY_MANAGER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #endif /* MEMORY_MANAGER_H_ */
