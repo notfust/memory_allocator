@@ -30,7 +30,7 @@ typedef struct memory_block {
 /** \brief Memory heap
  * \private
  */
-static uint8_t heap[HEAP_SIZE]     = { 0 };
+static uint8_t heap[HEAP_SIZE] = { 0 };
 
 /** \brief A pointer to the first block in the heap
  * \private
