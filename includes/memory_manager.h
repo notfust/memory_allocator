@@ -20,5 +20,12 @@
 /** \brief Initialize the memory manager */
 void memory_init(void);
 
+/** \brief Allocate memory from the heap
+ *
+ * \param size Required size in bytes
+ * \return Pointer to allocated memory or NULL in case of error
+ */
+void* memory_alloc(size_t size);
+
 
 #endif /* MEMORY_MANAGER_H_ */
