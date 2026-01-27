@@ -37,3 +37,15 @@ static uint8_t heap[HEAP_SIZE]     = { 0 };
  */
 static memory_block_t *first_block = NULL;
 
+
+
+void memory_init(void)
+{
+    // Creating the first block that occupies the entire heap
+    first_block          = (memory_block_t *)heap;
+    first_block->size    = HEAP_SIZE - sizeof(memory_block_t);
+    first_block->is_free = TRUE;
+    first_block->next    = NULL;
+    first_block->prev    = NULL;
+}
+

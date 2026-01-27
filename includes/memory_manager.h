@@ -9,4 +9,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+
+
+// Boolean definitions
+#define TRUE  (1)
+#define FALSE (0)
+
+
+
+/** \brief Initialize the memory manager */
+void memory_init(void);
+
+
 #endif /* MEMORY_MANAGER_H_ */
