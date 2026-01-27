@@ -92,3 +92,34 @@ static void *memory_alloc(size_t size)
     return NULL;
 }
 
+void memory_free(void *ptr)
+{
+    if (ptr == NULL) { return; }
+
+    // We get a pointer to the block header
+    memory_block_t *block = (memory_block_t *)((uint8_t *)ptr - sizeof(memory_block_t));
+
+    // Incorrect pointer - outside of heap
+    if (block < (memory_block_t *)heap || (uint8_t *)block + sizeof(memory_block_t) > (heap + HEAP_SIZE)) { return; }
+
+    block->is_free = TRUE;
+
+    // Coalesce with previous blocks if free
+    if (block->prev != NULL && block->prev->is_free) {
+        block->prev->size += sizeof(memory_block_t) + block->size;
+        block->prev->next  = block->next;
+
+        if (block->next != NULL) { block->next->prev = block->prev; }
+
+        block = block->prev;
+    }
+
+    // Coalesce with next blocks if free
+    if (block->next != NULL && block->next->is_free) {
+        block->size += sizeof(memory_block_t) + block->next->size;
+        block->next  = block->next->next;
+
+        if (block->next != NULL) { block->next->prev = block; }
+    }
+}
+

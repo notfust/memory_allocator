@@ -27,5 +27,12 @@ void memory_init(void);
  */
 void* memory_alloc(size_t size);
 
+/** \brief Free allocated memory
+ *
+ * \param ptr Pointer to the memory to be freed
+ * \return Error code indicating the result of the operation
+ */
+void memory_free(void* ptr);
+
 
 #endif /* MEMORY_MANAGER_H_ */
