@@ -16,7 +16,7 @@
 /** \brief Minimum usable size for a new block
  * \private
  */
-#define MIN_USEFUL_SIZE (8)
+#define MIN_USEFUL_SIZE (4)
 
 
 
