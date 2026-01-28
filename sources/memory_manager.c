@@ -18,12 +18,18 @@
  */
 #define MIN_USEFUL_SIZE (4)
 
+/** \brief Magic number for block validation
+ * \private
+ */
+#define BLOCK_MAGIC     (0xDEADBEEF)
+
 
 
 /** \brief Structure for the memory block header
  * \private
  */
 typedef struct memory_block {
+    uint32_t             magic;   /**< \brief Magic number for validation */
     size_t               size;    /**< \brief Block size (including header) */
     uint8_t              is_free; /**< \brief Flag: 1 - free, 0 - occupied */
     struct memory_block *next;    /**< \brief Pointer to the next block */
@@ -77,11 +83,36 @@ static void memory_defrag(void)
 }
 
 
+/** \brief Validate a memory block
+ *
+ * \param block Pointer to the memory block to validate
+ * \return TRUE if the block is valid, FALSE otherwise
+ * \private
+ */
+static bool is_valid_block(memory_block_t *block)
+{
+    // Checking for a null pointer
+    if (block == NULL) { return FALSE; }
+
+    // Checking that a block is inside our heap
+    if (block < (memory_block_t *)heap || (uint8_t *)block + sizeof(memory_block_t) > (heap + HEAP_SIZE)) { return FALSE; }
+
+    // Checking the magic number
+    if (block->magic != BLOCK_MAGIC) { return FALSE; }
+
+    // Checking that the block size is reasonable
+    if (block->size > HEAP_SIZE) { return FALSE; }
+
+    return TRUE;
+}
+
+
 
 void memory_init(void)
 {
     // Creating the first block that occupies the entire heap
     first_block          = (memory_block_t *)heap;
+    first_block->magic   = BLOCK_MAGIC;
     first_block->size    = HEAP_SIZE - sizeof(memory_block_t);
     first_block->is_free = TRUE;
     first_block->next    = NULL;
@@ -103,6 +134,7 @@ static void *memory_alloc(size_t size)
             // If the block is too big, we split it
             if (current->size > size + sizeof(memory_block_t) + MIN_USEFUL_SIZE) {
                 memory_block_t *next_block = (memory_block_t *)((uint8_t *)current + sizeof(memory_block_t) + size);
+                next_block->magic          = BLOCK_MAGIC;
                 next_block->size           = current->size - (sizeof(memory_block_t) + size);
                 next_block->is_free        = TRUE;
                 next_block->next           = current->next;
@@ -131,13 +163,10 @@ static void *memory_alloc(size_t size)
 
 void memory_free(void *ptr)
 {
-    if (ptr == NULL) { return; }
-
     // We get a pointer to the block header
     memory_block_t *block = (memory_block_t *)((uint8_t *)ptr - sizeof(memory_block_t));
 
-    // Incorrect pointer - outside of heap
-    if (block < (memory_block_t *)heap || (uint8_t *)block + sizeof(memory_block_t) > (heap + HEAP_SIZE)) { return; }
+    if (!is_valid_block(block)) { return; }
 
     block->is_free = TRUE;
 
