@@ -53,6 +53,29 @@ static memory_block_t *first_block = NULL;
  */
 static size_t align_size(size_t size, size_t align) { return (size + (align - 1)) & ~(align - 1); }
 
+/** \brief Defragment memory by merging adjacent free blocks
+ *
+ * \note This function does not move allocated blocks; it only merges free blocks.
+ * \private
+ */
+static void memory_defrag(void)
+{
+    memory_block_t *current = first_block;
+
+    while (current != NULL && current->next != NULL) {
+        // Merge with next block if both are free
+        if (current->is_free && current->next->is_free) {
+            current->size += sizeof(memory_block_t) + current->next->size;
+            current->next  = current->next->next;
+
+            if (current->next != NULL) { current->next->prev = current; }
+
+        } else {
+            current = current->next;
+        }
+    }
+}
+
 
 
 void memory_init(void)
