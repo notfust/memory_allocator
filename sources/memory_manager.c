@@ -16,7 +16,12 @@
 /** \brief Minimum usable size for a new block
  * \private
  */
-#define MIN_USEFUL_SIZE (8)
+#define MIN_USEFUL_SIZE (4)
+
+/** \brief Magic number for block validation
+ * \private
+ */
+#define BLOCK_MAGIC     (0xDEADBEEF)
 
 
 
@@ -24,6 +29,7 @@
  * \private
  */
 typedef struct memory_block {
+    uint32_t             magic;   /**< \brief Magic number for validation */
     size_t               size;    /**< \brief Block size (including header) */
     uint8_t              is_free; /**< \brief Flag: 1 - free, 0 - occupied */
     struct memory_block *next;    /**< \brief Pointer to the next block */
@@ -44,10 +50,69 @@ static memory_block_t *first_block = NULL;
 
 
 
+/** \brief Align size to the nearest multiple of `align` bytes for better performance
+ *
+ * \param size Size to align
+ * \param align Alignment in bytes (must be a power of two)
+ * \return Aligned size
+ * \private
+ */
+static size_t align_size(size_t size, size_t align) { return (size + (align - 1)) & ~(align - 1); }
+
+/** \brief Defragment memory by merging adjacent free blocks
+ *
+ * \note This function does not move allocated blocks; it only merges free blocks.
+ * \private
+ */
+static void memory_defrag(void)
+{
+    memory_block_t *current = first_block;
+
+    while (current != NULL && current->next != NULL) {
+        // Merge with next block if both are free
+        if (current->is_free && current->next->is_free) {
+            current->size += sizeof(memory_block_t) + current->next->size;
+            current->next  = current->next->next;
+
+            if (current->next != NULL) { current->next->prev = current; }
+
+        } else {
+            current = current->next;
+        }
+    }
+}
+
+
+/** \brief Validate a memory block
+ *
+ * \param block Pointer to the memory block to validate
+ * \return TRUE if the block is valid, FALSE otherwise
+ * \private
+ */
+static bool is_valid_block(memory_block_t *block)
+{
+    // Checking for a null pointer
+    if (block == NULL) { return FALSE; }
+
+    // Checking that a block is inside our heap
+    if (block < (memory_block_t *)heap || (uint8_t *)block + sizeof(memory_block_t) > (heap + HEAP_SIZE)) { return FALSE; }
+
+    // Checking the magic number
+    if (block->magic != BLOCK_MAGIC) { return FALSE; }
+
+    // Checking that the block size is reasonable
+    if (block->size > HEAP_SIZE) { return FALSE; }
+
+    return TRUE;
+}
+
+
+
 void memory_init(void)
 {
     // Creating the first block that occupies the entire heap
     first_block          = (memory_block_t *)heap;
+    first_block->magic   = BLOCK_MAGIC;
     first_block->size    = HEAP_SIZE - sizeof(memory_block_t);
     first_block->is_free = TRUE;
     first_block->next    = NULL;
@@ -60,12 +125,16 @@ static void *memory_alloc(size_t size)
 
     memory_block_t *current = first_block;
 
+    // Align size for better performance
+    size = align_size(size, MIN_USEFUL_SIZE);
+
     // We are looking for the first suitable free block (First-Fit algorithm)
     while (current != NULL) {
         if (current->is_free && current->size >= size) {
             // If the block is too big, we split it
             if (current->size > size + sizeof(memory_block_t) + MIN_USEFUL_SIZE) {
                 memory_block_t *next_block = (memory_block_t *)((uint8_t *)current + sizeof(memory_block_t) + size);
+                next_block->magic          = BLOCK_MAGIC;
                 next_block->size           = current->size - (sizeof(memory_block_t) + size);
                 next_block->is_free        = TRUE;
                 next_block->next           = current->next;
@@ -94,13 +163,10 @@ static void *memory_alloc(size_t size)
 
 void memory_free(void *ptr)
 {
-    if (ptr == NULL) { return; }
-
     // We get a pointer to the block header
     memory_block_t *block = (memory_block_t *)((uint8_t *)ptr - sizeof(memory_block_t));
 
-    // Incorrect pointer - outside of heap
-    if (block < (memory_block_t *)heap || (uint8_t *)block + sizeof(memory_block_t) > (heap + HEAP_SIZE)) { return; }
+    if (!is_valid_block(block)) { return; }
 
     block->is_free = TRUE;
 
