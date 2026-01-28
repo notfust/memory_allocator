@@ -44,6 +44,17 @@ static memory_block_t *first_block = NULL;
 
 
 
+/** \brief Align size to the nearest multiple of `align` bytes for better performance
+ *
+ * \param size Size to align
+ * \param align Alignment in bytes (must be a power of two)
+ * \return Aligned size
+ * \private
+ */
+static size_t align_size(size_t size, size_t align) { return (size + (align - 1)) & ~(align - 1); }
+
+
+
 void memory_init(void)
 {
     // Creating the first block that occupies the entire heap
@@ -59,6 +70,9 @@ static void *memory_alloc(size_t size)
     if (size == 0 || first_block == NULL) { return NULL; }
 
     memory_block_t *current = first_block;
+
+    // Align size for better performance
+    size = align_size(size, MIN_USEFUL_SIZE);
 
     // We are looking for the first suitable free block (First-Fit algorithm)
     while (current != NULL) {
