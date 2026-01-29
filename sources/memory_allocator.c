@@ -76,12 +76,10 @@ static size_t block_total_size(size_t data_size) { return sizeof(memory_block_t)
  */
 static void *block_data_ptr(memory_block_t *block) { return (void *)((uint8_t *)block + sizeof(memory_block_t)); }
 
-/** \brief Defragment memory by merging adjacent free blocks
- *
- * \note This function does not move allocated blocks; it only merges free blocks.
+/** \brief Merge adjacent free blocks
  * \private
  */
-static void memory_defrag(void)
+static void memory_merge_free_blocks(void)
 {
     memory_block_t *current = first_block;
 
