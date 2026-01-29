@@ -94,7 +94,7 @@ static bool is_valid_block(memory_block_t *block)
     if (block == NULL) { return FALSE; }
 
     // Checking that a block is inside our heap
-    if (block < (memory_block_t *)heap || (uint8_t *)block + sizeof(memory_block_t) > (heap + HEAP_SIZE)) { return FALSE; }
+    if ((uint8_t *)block < heap || (uint8_t *)block + sizeof(memory_block_t) > (heap + HEAP_SIZE)) { return FALSE; }
 
     // Checking the magic number
     if (block->magic != BLOCK_MAGIC) { return FALSE; }
