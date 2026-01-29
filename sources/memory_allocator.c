@@ -59,6 +59,14 @@ static memory_block_t *first_block = NULL;
  */
 static size_t align_size(size_t size, size_t align) { return (size + (align - 1)) & ~(align - 1); }
 
+/** \brief Calculate the total size of a memory block including header
+ *
+ * \param data_size Size of user data in bytes
+ * \return Total block size including header
+ * \private
+ */
+static size_t block_total_size(size_t data_size) { return sizeof(memory_block_t) + data_size; }
+
 /** \brief Defragment memory by merging adjacent free blocks
  *
  * \note This function does not move allocated blocks; it only merges free blocks.
@@ -71,7 +79,7 @@ static void memory_defrag(void)
     while (current != NULL && current->next != NULL) {
         // Merge with next block if both are free
         if (current->is_free && current->next->is_free) {
-            current->size += sizeof(memory_block_t) + current->next->size;
+            current->size += block_total_size(current->next->size);
             current->next  = current->next->next;
 
             if (current->next != NULL) { current->next->prev = current; }
@@ -132,9 +140,9 @@ static void *memory_alloc(size_t size)
         if (current->is_free && current->size >= size) {
             // If the block is too big, we split it
             if (current->size > size + sizeof(memory_block_t) + MIN_USEFUL_SIZE) {
-                memory_block_t *next_block = (memory_block_t *)((uint8_t *)current + sizeof(memory_block_t) + size);
+                memory_block_t *next_block = (memory_block_t *)((uint8_t *)current + block_total_size(size));
                 next_block->magic          = BLOCK_MAGIC;
-                next_block->size           = current->size - (sizeof(memory_block_t) + size);
+                next_block->size           = current->size - block_total_size(size);
                 next_block->is_free        = TRUE;
                 next_block->next           = current->next;
                 next_block->prev           = current;
@@ -171,7 +179,7 @@ void memory_free(void *ptr)
 
     // Coalesce with previous blocks if free
     if (block->prev != NULL && block->prev->is_free) {
-        block->prev->size += sizeof(memory_block_t) + block->size;
+        block->prev->size += block_total_size(block->size);
         block->prev->next  = block->next;
 
         if (block->next != NULL) { block->next->prev = block->prev; }
@@ -181,7 +189,7 @@ void memory_free(void *ptr)
 
     // Coalesce with next blocks if free
     if (block->next != NULL && block->next->is_free) {
-        block->size += sizeof(memory_block_t) + block->next->size;
+        block->size += block_total_size(block->next->size);
         block->next  = block->next->next;
 
         if (block->next != NULL) { block->next->prev = block; }
