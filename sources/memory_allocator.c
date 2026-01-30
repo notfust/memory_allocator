@@ -146,7 +146,7 @@ static void *memory_alloc(size_t size)
     while (current != NULL) {
         if (current->is_free && current->size >= size) {
             // If the block is too big, we split it
-            if (current->size > size + sizeof(memory_block_t) + MIN_USEFUL_SIZE) {
+            if (current->size > size + block_total_size(MIN_USEFUL_SIZE)) {
                 memory_block_t *next_block = (memory_block_t *)((uint8_t *)current + block_total_size(size));
                 next_block->magic          = BLOCK_MAGIC;
                 next_block->size           = current->size - block_total_size(size);
