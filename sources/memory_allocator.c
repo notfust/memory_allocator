@@ -57,7 +57,10 @@ static memory_block_t *first_block = NULL;
  * \return Aligned size
  * \private
  */
-static size_t align_size(size_t size, size_t align) { return (size + (align - 1)) & ~(align - 1); }
+static size_t align_size(size_t size, size_t align)
+{
+    return (size + (align - 1)) & ~(align - 1);
+}
 
 /** \brief Calculate the total size of a memory block including header
  *
@@ -65,7 +68,10 @@ static size_t align_size(size_t size, size_t align) { return (size + (align - 1)
  * \return Total block size including header
  * \private
  */
-static size_t block_total_size(size_t data_size) { return sizeof(memory_block_t) + data_size; }
+static size_t block_total_size(size_t data_size)
+{
+    return sizeof(memory_block_t) + data_size;
+}
 
 /**
  * \brief Get pointer to user data area from block header
@@ -74,7 +80,10 @@ static size_t block_total_size(size_t data_size) { return sizeof(memory_block_t)
  * \return Pointer to user data
  * \private
  */
-static void *block_data_ptr(memory_block_t *block) { return (void *)((uint8_t *)block + sizeof(memory_block_t)); }
+static void *block_data_ptr(memory_block_t *block)
+{
+    return (void *)((uint8_t *)block + sizeof(memory_block_t));
+}
 
 /** \brief Merge adjacent free blocks
  * \private
