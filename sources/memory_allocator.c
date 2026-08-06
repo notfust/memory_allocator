@@ -142,7 +142,7 @@ void memory_init(void)
     first_block->prev    = NULL;
 }
 
-static void *memory_alloc(size_t size)
+void *memory_alloc(size_t size)
 {
     if (size == 0 || first_block == NULL) { return NULL; }
 
