@@ -40,6 +40,59 @@
 #include <stdint.h>
 
 
+/**
+ * \brief Type used to obtain the allocator's C99 payload alignment.
+ *
+ * A union is aligned to satisfy each of its members.  It is used only to
+ * align allocator-owned storage without C11's `_Alignas` or
+ * compiler-specific attributes.
+ *
+ * The allocator guarantees this alignment for every returned pointer.  It is
+ * sufficient for the standard scalar types represented below and for
+ * structures and unions composed from them.  Platform-specific types with a
+ * stricter requirement must not be stored in allocator memory until the
+ * platform layer extends this type and validates the resulting contract.
+ */
+typedef union memory_allocator_alignment {
+    void *object_pointer;
+    void (*function_pointer)(void);
+    wchar_t wide_character;
+    signed char signed_character;
+    unsigned char unsigned_character;
+    short signed_short;
+    unsigned short unsigned_short;
+    int signed_integer;
+    unsigned int unsigned_integer;
+    long signed_long;
+    unsigned long unsigned_long;
+    long long signed_long_long;
+    unsigned long long unsigned_long_long;
+    float single_precision;
+    double double_precision;
+    long double extended_precision;
+    float _Complex single_precision_complex;
+    double _Complex double_precision_complex;
+    long double _Complex extended_precision_complex;
+} memory_allocator_alignment_t;
+
+/**
+ * \brief Guaranteed alignment, in bytes, of memory_alloc() results.
+ *
+ * For a TriCore EABI target, standard scalar types require at most four-byte
+ * alignment, so the target contract is fixed at four bytes.  Other targets
+ * use the alignment wrapper size as a portable C99 upper bound for the
+ * standard scalar types supported by their active toolchain.
+ *
+ * The storage wrapper and this placement quantum have distinct purposes:
+ * the wrapper aligns the heap base, while this macro aligns every header and
+ * payload within that heap.
+ */
+#ifdef TRICORE_TARGET
+#define MEMORY_ALLOCATOR_ALIGNMENT ((size_t)4U)
+#else
+#define MEMORY_ALLOCATOR_ALIGNMENT ((size_t)sizeof(memory_allocator_alignment_t))
+#endif
+
 
 // Boolean definitions
 #ifndef TRUE
