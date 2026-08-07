@@ -6,6 +6,7 @@
 
 #include "../includes/memory_allocator.h"
 
+#include "../includes/memory_allocator_platform.h"
 
 
 /** \brief Size of memory heap in bytes
@@ -24,30 +25,27 @@
 #define BLOCK_MAGIC     (0xDEADBEEF)
 
 
-
-/** \brief Structure for the memory block header
+/** \brief Structure copied to and from each block header
  * \private
  */
 typedef struct memory_block {
-    uint32_t             magic;   /**< \brief Magic number for validation */
-    size_t               size;    /**< \brief Payload size in bytes */
-    uint8_t              is_free; /**< \brief Flag: 1 - free, 0 - occupied */
-    struct memory_block *next;    /**< \brief Pointer to the next block */
-    struct memory_block *prev;    /**< \brief Pointer to the previous block */
+    uint32_t magic;   /**< \brief Magic number for validation */
+    size_t   size;    /**< \brief Payload size in bytes */
+    uint8_t  is_free; /**< \brief Flag: 1 - free, 0 - occupied */
+    uint8_t *next;    /**< \brief Address of the next block header */
+    uint8_t *prev;    /**< \brief Address of the previous block header */
 } memory_block_t;
-
 
 /** \brief C99-compatible storage for an aligned heap region
  * \private
  *
- * Every union member starts at the union address.  The byte region is thus
- * aligned for all standard scalar types represented by
- * memory_allocator_alignment_t, including the alignment required by the
- * platform-specific payload contract.
+ * The alignment member makes bytes[0] suitably aligned for the platform
+ * contract. Metadata is accessed only by byte copies, never by treating the
+ * byte array itself as a memory_block_t object.
  */
 typedef union memory_heap_storage {
-    memory_allocator_alignment_t alignment;
-    uint8_t                      bytes[HEAP_SIZE];
+    memory_allocator_storage_alignment_t alignment;
+    uint8_t                              bytes[HEAP_SIZE];
 } memory_heap_storage_t;
 
 
@@ -56,14 +54,46 @@ typedef union memory_heap_storage {
  */
 static memory_heap_storage_t heap_storage = { { 0 } };
 
-/** \brief A pointer to the first block in the heap
+/** \brief Address of the first block header in the heap
  * \private
  */
-static memory_block_t *first_block = NULL;
+static uint8_t *first_block = NULL;
 
 
+/** \brief Copy bytes without depending on libc memcpy()
+ *
+ * Source and destination must not overlap.
+ *
+ * \param destination Destination byte range
+ * \param source Source byte range
+ * \param size Number of bytes to copy
+ * \private
+ */
+static void copy_bytes(void *destination, const void *source, size_t size)
+{
+    uint8_t       *destination_bytes = (uint8_t *)destination;
+    const uint8_t *source_bytes      = (const uint8_t *)source;
 
-/** \brief Align size to the nearest multiple of `align` bytes for better performance
+    for (size_t index = 0; index < size; ++index) { destination_bytes[index] = source_bytes[index]; }
+}
+
+/** \brief Read a block header from byte storage
+ * \private
+ */
+static void block_load(const uint8_t *address, memory_block_t *block)
+{ 
+    copy_bytes(block, address, sizeof(*block)); 
+}
+
+/** \brief Write a block header to byte storage
+ * \private
+ */
+static void block_store(uint8_t *address, const memory_block_t *block)
+{ 
+    copy_bytes(address, block, sizeof(*block)); 
+}
+
+/** \brief Align size to the nearest multiple of align bytes
  *
  * \param size Size to align
  * \param align Alignment in bytes
@@ -73,10 +103,7 @@ static memory_block_t *first_block = NULL;
 static size_t align_size(size_t size, size_t align)
 {
     size_t remainder = size % align;
-
-    if (remainder == 0U) { return size; }
-
-    return size + (align - remainder);
+    return (remainder == 0) ? (size) : (size + (align - remainder));
 }
 
 /** \brief Get the padded size of a block header
@@ -88,8 +115,8 @@ static size_t align_size(size_t size, size_t align)
  * \private
  */
 static size_t block_header_size(void)
-{
-    return align_size(sizeof(memory_block_t), MEMORY_ALLOCATOR_ALIGNMENT);
+{ 
+    return align_size(sizeof(memory_block_t), MEMORY_ALLOCATOR_ALIGNMENT); 
 }
 
 /** \brief Calculate the total size of a memory block including header
@@ -99,148 +126,157 @@ static size_t block_header_size(void)
  * \private
  */
 static size_t block_total_size(size_t data_size)
-{
-    return block_header_size() + data_size;
+{ 
+    return block_header_size() + data_size; 
 }
 
-/**
- * \brief Get pointer to user data area from block header
+/** \brief Get pointer to user data area from a block header address
+ * \private
+ */
+static void *block_data_ptr(uint8_t *block_address)
+{ 
+    return (void *)(block_address + block_header_size()); 
+}
+
+/** \brief Validate and read a memory block header
  *
- * \param block Memory block header
- * \return Pointer to user data
+ * \param address Address of the candidate block header
+ * \param block Destination for the copied header
+ * \return TRUE if the header belongs to the heap and has valid magic
  * \private
  */
-static void *block_data_ptr(memory_block_t *block)
+static bool is_valid_block(const uint8_t *address, memory_block_t *block)
 {
-    return (void *)((uint8_t *)block + block_header_size());
-}
+    if (address == NULL || block == NULL) { return FALSE; }
 
-/** \brief Merge adjacent free blocks
- * \private
- */
-static void memory_merge_free_blocks(void)
-{
-    memory_block_t *current = first_block;
+    if (address < heap_storage.bytes || address + block_header_size() > heap_storage.bytes + HEAP_SIZE) { return FALSE; }
 
-    while (current != NULL && current->next != NULL) {
-        // Merge with next block if both are free
-        if (current->is_free && current->next->is_free) {
-            current->size += block_total_size(current->next->size);
-            current->next  = current->next->next;
+    block_load(address, block);
 
-            if (current->next != NULL) { current->next->prev = current; }
-
-        } else {
-            current = current->next;
-        }
-    }
-}
-
-/** \brief Validate a memory block
- *
- * \param block Pointer to the memory block to validate
- * \return TRUE if the block is valid, FALSE otherwise
- * \private
- */
-static bool is_valid_block(memory_block_t *block)
-{
-    // Checking for a null pointer
-    if (block == NULL) { return FALSE; }
-
-    // Checking that a block is inside our heap
-    if ((uint8_t *)block < heap_storage.bytes
-        || (uint8_t *)block + block_header_size() > (heap_storage.bytes + HEAP_SIZE)) {
-        return FALSE;
-    }
-
-    // Checking the magic number
     if (block->magic != BLOCK_MAGIC) { return FALSE; }
 
-    // Checking that the block size is reasonable
     if (block->size > HEAP_SIZE) { return FALSE; }
 
     return TRUE;
 }
 
-
-
 void memory_init(void)
 {
-    // Creating the first block that occupies the entire heap
-    first_block          = (memory_block_t *)heap_storage.bytes;
-    first_block->magic   = BLOCK_MAGIC;
-    first_block->size    = HEAP_SIZE - block_header_size();
-    first_block->is_free = TRUE;
-    first_block->next    = NULL;
-    first_block->prev    = NULL;
+    memory_block_t first = { 0 };
+
+    first.magic   = BLOCK_MAGIC;
+    first.size    = HEAP_SIZE - block_header_size();
+    first.is_free = TRUE;
+    first.next    = NULL;
+    first.prev    = NULL;
+
+    first_block = heap_storage.bytes;
+    block_store(first_block, &first);
 }
 
 void *memory_alloc(size_t size)
 {
+    uint8_t *current_address;
+
     if (size == 0 || first_block == NULL) { return NULL; }
 
-    memory_block_t *current = first_block;
+    size            = align_size(size, MEMORY_ALLOCATOR_ALIGNMENT);
+    current_address = first_block;
 
-    // Align size for better performance
-    size = align_size(size, MEMORY_ALLOCATOR_ALIGNMENT);
+    while (current_address != NULL) {
+        memory_block_t current;
 
-    // We are looking for the first suitable free block (First-Fit algorithm)
-    while (current != NULL) {
-        if (current->is_free && current->size >= size) {
-            // If the block is too big, we split it
-            if (current->size > size + block_total_size(MIN_USEFUL_SIZE)) {
-                memory_block_t *next_block = (memory_block_t *)((uint8_t *)current + block_total_size(size));
-                next_block->magic          = BLOCK_MAGIC;
-                next_block->size           = current->size - block_total_size(size);
-                next_block->is_free        = TRUE;
-                next_block->next           = current->next;
-                next_block->prev           = current;
+        block_load(current_address, &current);
 
-                if (current->next != NULL) { current->next->prev = next_block; }
+        if (current.is_free && current.size >= size) {
+            if (current.size > size + block_total_size(MIN_USEFUL_SIZE)) {
+                uint8_t       *next_address = current_address + block_total_size(size);
+                memory_block_t next         = { 0 };
 
-                current->size    = size;
-                current->is_free = FALSE;
-                current->next    = next_block;
+                next.magic   = BLOCK_MAGIC;
+                next.size    = current.size - block_total_size(size);
+                next.is_free = TRUE;
+                next.next    = current.next;
+                next.prev    = current_address;
 
+                if (current.next != NULL) {
+                    memory_block_t following;
+
+                    block_load(current.next, &following);
+                    following.prev = next_address;
+                    block_store(current.next, &following);
+                }
+
+                current.size    = size;
+                current.is_free = FALSE;
+                current.next    = next_address;
+
+                block_store(next_address, &next);
+                block_store(current_address, &current);
             } else {
-                // We'll use the entire block
-                current->is_free = FALSE;
+                current.is_free = FALSE;
+                block_store(current_address, &current);
             }
 
-            return block_data_ptr(current);
+            return block_data_ptr(current_address);
         }
 
-        current = current->next;
+        current_address = current.next;
     }
 
-    // Still no memory available
     return NULL;
 }
 
 void memory_free(void *ptr)
 {
-    // We get a pointer to the block header
-    memory_block_t *block = (memory_block_t *)((uint8_t *)ptr - block_header_size());
+    uint8_t       *block_address;
+    memory_block_t block;
 
-    if (!is_valid_block(block)) { return; }
+    if (ptr == NULL) { return; }
 
-    block->is_free = TRUE;
+    block_address = (uint8_t *)ptr - block_header_size();
 
-    // Coalesce with previous blocks if free
-    if (block->prev != NULL && block->prev->is_free) {
-        block->prev->size += block_total_size(block->size);
-        block->prev->next  = block->next;
+    if (!is_valid_block(block_address, &block)) { return; }
 
-        if (block->next != NULL) { block->next->prev = block->prev; }
+    block.is_free = TRUE;
 
-        block = block->prev;
+    if (block.prev != NULL) {
+        memory_block_t previous;
+
+        if (is_valid_block(block.prev, &previous) && previous.is_free) {
+            previous.size += block_total_size(block.size);
+            previous.next  = block.next;
+
+            if (block.next != NULL) {
+                memory_block_t next;
+
+                block_load(block.next, &next);
+                next.prev = block.prev;
+                block_store(block.next, &next);
+            }
+
+            block_address = block.prev;
+            block         = previous;
+            block_store(block_address, &block);
+        }
     }
 
-    // Coalesce with next blocks if free
-    if (block->next != NULL && block->next->is_free) {
-        block->size += block_total_size(block->next->size);
-        block->next  = block->next->next;
+    if (block.next != NULL) {
+        memory_block_t next;
 
-        if (block->next != NULL) { block->next->prev = block; }
+        if (is_valid_block(block.next, &next) && next.is_free) {
+            block.size += block_total_size(next.size);
+            block.next  = next.next;
+
+            if (block.next != NULL) {
+                memory_block_t following;
+
+                block_load(block.next, &following);
+                following.prev = block_address;
+                block_store(block.next, &following);
+            }
+        }
     }
+
+    block_store(block_address, &block);
 }

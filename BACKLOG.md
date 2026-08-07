@@ -6,12 +6,14 @@
 
 - [x] Исправить выравнивание region и возвращаемых указателей под C99/TriCore ABI.
   - Эффект: убирает undefined behavior на доступах и делает allocator пригодным для target.
-  - Реализация: C99 union выравнивает начало внутреннего region; размер header и
-    каждый payload округляются до отдельного placement contract
-    `MEMORY_ALLOCATOR_ALIGNMENT`. Для `TRICORE_TARGET` он явно равен 4 байтам
-    по TriCore EABI, для host используется безопасный C99 fallback. Добавлен
-    host-тест `tests/test_memory_allocator_alignment.c`; 4-байтный target contract
-    должен быть подтверждён target CI с `tricore-gcc`.
+  - Реализация: platform header изолирует `TRICORE_TARGET` и placement contract
+    `MEMORY_ALLOCATOR_ALIGNMENT`; C99 union выравнивает начало internal region,
+    а header и payload округляются до contract. Metadata читается и записывается
+    собственным побайтным копированием, без type-punning `uint8_t[]` и без libc.
+    Для `TRICORE_TARGET` contract равен 4 байтам по TriCore EABI, для host
+    используется C99 offset-probe fallback. Тест покрывает split, exhaustion и
+    выравнивание после coalesce; 4-байтный contract должен быть подтверждён
+    target CI с `tricore-gcc`.
 
 - [ ] Устранить undefined behavior и переполнения `size_t` в `alloc`/`free`.
   - Эффект: предотвращает выход за границы heap при больших или некорректных запросах.

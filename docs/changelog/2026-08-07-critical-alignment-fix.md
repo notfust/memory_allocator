@@ -14,7 +14,7 @@
 
 ## 2. Почему прежнее решение с одним `sizeof(union)` было недостаточно гибким
 
-Первый вариант исправления использовал `sizeof(memory_allocator_alignment_t)` одновременно как:
+Первый вариант исправления использовал `sizeof(memory_allocator_storage_alignment_t)` одновременно как:
 
 - способ выровнять базовый адрес heap;
 - шаг размещения header и payload (`MEMORY_ALLOCATOR_ALIGNMENT`).
@@ -32,11 +32,11 @@
 
 ### 3.1. C99 union выравнивает начало внутреннего heap
 
-В заголовке определён `memory_allocator_alignment_t` — union со стандартными scalar-типами, включая указатели, целые, floating-point и complex-типы. В source heap хранится как:
+В platform/config header определён `memory_allocator_storage_alignment_t` — union со стандартными scalar-типами, включая указатели, целые, floating-point и complex-типы. В source heap хранится как:
 
 ```c
 typedef union memory_heap_storage {
-    memory_allocator_alignment_t alignment;
+    memory_allocator_storage_alignment_t alignment;
     uint8_t                      bytes[HEAP_SIZE];
 } memory_heap_storage_t;
 ```
@@ -47,20 +47,30 @@ Union не выполняет динамического выравнивани�
 
 ### 3.2. Placement quantum отделён от storage wrapper
 
-`MEMORY_ALLOCATOR_ALIGNMENT` определён так:
+`MEMORY_ALLOCATOR_ALIGNMENT` определён в непубличном
+`includes/memory_allocator_platform.h`:
 
 ```c
 #ifdef TRICORE_TARGET
 #define MEMORY_ALLOCATOR_ALIGNMENT ((size_t)4U)
 #else
-#define MEMORY_ALLOCATOR_ALIGNMENT ((size_t)sizeof(memory_allocator_alignment_t))
+#define MEMORY_ALLOCATOR_ALIGNMENT \
+    ((size_t)offsetof(memory_allocator_storage_alignment_probe_t, value))
 #endif
 ```
 
-- При `TRICORE_TARGET` contract фиксирован в 4 байта — требование TriCore EABI для стандартных scalar-типов. Поэтому размер `long double _Complex` не влияет на расход каждого блока.
-- Для host остаётся консервативный C99 fallback: размер alignment-wrapper является кратным его требуемому выравниванию и достаточен для представленных стандартных типов. На использованном host это 16 байт.
+Публичный `memory_allocator.h` теперь не содержит ни ABI-константы, ни
+`TRICORE_TARGET`; target build выбирает их в platform/config header.
 
-Это не означает, что `sizeof(union)` равен alignment. В fallback это безопасный, иногда больший шаг. Для target задано точное ABI-обоснованное значение, поэтому лишнего 16-байтного округления на AURIX нет.
+- При `TRICORE_TARGET` contract фиксирован в 4 байта — требование TriCore EABI для стандартных scalar-типов. Поэтому размер `long double _Complex` не влияет на расход каждого блока.
+- Для host fallback берётся `offsetof` поля wrapper-типа после `char`. Это
+  C99-константа, не меньшая требуемого выравнивания wrapper и его членов. На
+  использованном host это 8 байт.
+
+Это не означает, что `sizeof(union)` равен alignment. Размер `long double
+_Complex` может быть 16 байт при alignment 8. Offset probe измеряет нужный
+шаг размещения, а не размер объекта; для target дополнительно задано точное
+ABI-обоснованное значение 4.
 
 `TRICORE_TARGET` должен задаваться только target-конфигурацией HighTec build. Нельзя определять его при host-сборке: host compiler требует собственного, более строгого выравнивания `long double`.
 
@@ -115,13 +125,17 @@ size = align_size(size, MEMORY_ALLOCATOR_ALIGNMENT);
 
 ## 4. Изменённые файлы и функции
 
-- `includes/memory_allocator.h`
-  - `memory_allocator_alignment_t` — C99 storage-alignment wrapper;
+- `includes/memory_allocator_platform.h`
+  - private C99 storage-alignment wrapper;
   - `MEMORY_ALLOCATOR_ALIGNMENT` — отдельный placement contract: 4 для `TRICORE_TARGET`, безопасный host fallback иначе.
+- `includes/memory_allocator.h`
+  - только публичный API; platform macro и TriCore condition из него удалены.
 - `sources/memory_allocator.c`
   - `memory_heap_storage_t` и `heap_storage` вместо байтового static heap;
+  - `memory_copy_bytes()`, `block_load()` и `block_store()` обеспечивают
+    C99-корректную работу metadata через byte representation без libc `memcpy`;
   - `align_size()`, новая `block_header_size()`, `block_total_size()`, `block_data_ptr()`;
-  - `is_valid_block()`, `memory_init()`, `memory_alloc()` и `memory_free()` используют padded layout.
+  - `is_valid_block()`, `memory_init()`, `memory_alloc()` и `memory_free()` используют padded layout и локальные копии header.
 - `tests/test_memory_allocator_alignment.c`
   - проверяет host alignment и записывает `long double`/`long double _Complex`;
   - при `TRICORE_TARGET` дополнительно проверяет контракт `MEMORY_ALLOCATOR_ALIGNMENT == 4U`.
@@ -132,8 +146,9 @@ size = align_size(size, MEMORY_ALLOCATOR_ALIGNMENT);
 
 Подход:
 
-- соответствует C99: не требует `_Alignas`, `max_align_t` или compiler attributes;
-- изолирует правило TriCore ABI в одном macro, а не разносит `4` по allocator core;
+- соответствует C99: не требует `_Alignas`, `max_align_t`, compiler attributes или libc `memcpy`;
+- изолирует правило TriCore ABI в одном platform/config header, а не в публичном API и не разносит `4` по allocator core;
+- не трактует `uint8_t[]` как `memory_block_t`: header копируется в обычный локальный объект, изменяется и копируется обратно;
 - сохраняет host-совместимость с более строгими ABI;
 - не меняет публичный API и не создаёт runtime state;
 - добавляет постоянное число простых арифметических операций и не меняет first-fit алгоритм.
@@ -156,6 +171,20 @@ size = align_size(size, MEMORY_ALLOCATOR_ALIGNMENT);
 
 Не выбрано для core: они привязывают portable allocator к конкретному compiler/linker. Такие механизмы допустимы в будущем platform layer для внешнего linker region, но не заменяют padding header и payload.
 
+### Обращение к metadata через `memory_block_t *`
+
+Не выбрано: выравнивание union устраняет только ошибку адреса. В строгом C99
+`uint8_t[]` не становится объектом `memory_block_t` от одного cast. Вместо
+этого `block_load()` побайтно переносит representation header из region в
+локальный `memory_block_t`, а `block_store()` переносит его обратно.
+
+Это работает так же, как `memcpy(&local_header, region, sizeof local_header)`:
+`uint8_t` может читать и записывать object representation любого объекта, а
+локальный `memory_block_t` имеет корректный тип и выравнивание. Реализована
+собственная небольшая функция `memory_copy_bytes()`, потому что allocator не
+должен зависеть от libc. Копирование всегда выполняется между неперекрывающимися
+диапазонами и имеет фиксированную длину header.
+
 ### Ручное выравнивание внутри `uint8_t[]`
 
 Не выбрано: требуется дополнительный запас, преобразование/проверка адресов, хранение исходной границы и более сложная логика. Union решает выравнивание внутреннего static buffer средствами C99 layout.
@@ -168,7 +197,7 @@ size = align_size(size, MEMORY_ALLOCATOR_ALIGNMENT);
 
 ### Потребление памяти
 
-`HEAP_SIZE` остаётся 2048 байт. Потери определяются padding header и округлением каждого payload. На TriCore шаг равен 4, то есть overhead ограничен максимум 3 байтами на header/payload округление относительно исходного 4-байтного подхода; дополнительно может появиться только padding header, если его размер не кратен 4. На host fallback может быть 16 байт, что сознательно увеличивает внутреннюю фрагментацию ради безопасного доступа типов host ABI.
+`HEAP_SIZE` остаётся 2048 байт. Потери определяются padding header и округлением каждого payload. На TriCore шаг равен 4, то есть overhead ограничен максимум 3 байтами на header/payload округление относительно исходного 4-байтного подхода; дополнительно может появиться только padding header, если его размер не кратен 4. На host fallback равен фактическому безопасному alignment wrapper на активном ABI; на использованном host это 8 байт. Это может увеличить внутреннюю фрагментацию относительно 4-байтного target, но не из-за размера `long double _Complex`.
 
 ### Производительность и детерминированность
 
@@ -184,7 +213,9 @@ First-fit, split и coalesce не изменены. Добавленные оп�
 
 1. на host получает alignment `void *`, `long long`, `long double`, `long double _Complex` C99-совместимо — через offset поля в отдельной структуре;
 2. проверяет, что host fallback quantum кратен каждому требованию;
-3. выделяет несколько блоков, проверяет адреса и реально записывает `long double` и `long double _Complex`;
-4. при target-конфигурации проверяет, что macro равен 4.
+3. проверяет минимальный запрос `memory_alloc(1U)` и последующий split;
+4. выделяет блоки до полного исчерпания 2048-байтного heap и проверяет, что следующий запрос возвращает `NULL`;
+5. создаёт серию split-блоков, освобождает их в двух проходах для coalesce и проверяет alignment новой крупной allocation;
+6. на host реально записывает `long double` и `long double _Complex`; при target-конфигурации проверяет контракт 4 байта.
 
-Host-прогоны выполнены с `clang` и `gcc` в строгом C99 режиме, а также с `clang` + ASan/UBSan. На host `MEMORY_ALLOCATOR_ALIGNMENT` равен 16, тесты прошли. После данной доработки target-вариант должен быть дополнительно собран `tricore-gcc` с `-DTRICORE_TARGET`; host нельзя использовать как замену такой проверки.
+Host-прогоны выполнены с `clang` и `gcc` в строгом C99 режиме, а также с `clang` + ASan/UBSan. На использованном host `MEMORY_ALLOCATOR_ALIGNMENT` равен 8, тесты прошли. После данной доработки target-вариант должен быть дополнительно собран `tricore-gcc` с `-DTRICORE_TARGET`; host нельзя использовать как замену такой проверки.
