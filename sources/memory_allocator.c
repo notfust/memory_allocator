@@ -57,7 +57,10 @@ static memory_block_t *first_block = NULL;
  * \return Aligned size
  * \private
  */
-static size_t align_size(size_t size, size_t align) { return (size + (align - 1)) & ~(align - 1); }
+static size_t align_size(size_t size, size_t align)
+{
+    return (size + (align - 1)) & ~(align - 1);
+}
 
 /** \brief Calculate the total size of a memory block including header
  *
@@ -65,7 +68,10 @@ static size_t align_size(size_t size, size_t align) { return (size + (align - 1)
  * \return Total block size including header
  * \private
  */
-static size_t block_total_size(size_t data_size) { return sizeof(memory_block_t) + data_size; }
+static size_t block_total_size(size_t data_size)
+{
+    return sizeof(memory_block_t) + data_size;
+}
 
 /**
  * \brief Get pointer to user data area from block header
@@ -74,7 +80,10 @@ static size_t block_total_size(size_t data_size) { return sizeof(memory_block_t)
  * \return Pointer to user data
  * \private
  */
-static void *block_data_ptr(memory_block_t *block) { return (void *)((uint8_t *)block + sizeof(memory_block_t)); }
+static void *block_data_ptr(memory_block_t *block)
+{
+    return (void *)((uint8_t *)block + sizeof(memory_block_t));
+}
 
 /** \brief Merge adjacent free blocks
  * \private
@@ -133,7 +142,7 @@ void memory_init(void)
     first_block->prev    = NULL;
 }
 
-static void *memory_alloc(size_t size)
+void *memory_alloc(size_t size)
 {
     if (size == 0 || first_block == NULL) { return NULL; }
 
@@ -146,7 +155,7 @@ static void *memory_alloc(size_t size)
     while (current != NULL) {
         if (current->is_free && current->size >= size) {
             // If the block is too big, we split it
-            if (current->size > size + sizeof(memory_block_t) + MIN_USEFUL_SIZE) {
+            if (current->size > size + block_total_size(MIN_USEFUL_SIZE)) {
                 memory_block_t *next_block = (memory_block_t *)((uint8_t *)current + block_total_size(size));
                 next_block->magic          = BLOCK_MAGIC;
                 next_block->size           = current->size - block_total_size(size);
