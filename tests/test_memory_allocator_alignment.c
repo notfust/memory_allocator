@@ -117,6 +117,35 @@ static void test_alignment_after_split_and_coalesce(void)
     memory_free(large_allocation);
 }
 
+static void test_rejected_overflow_request_preserves_heap(void)
+{
+    void *allocation;
+
+    memory_init();
+
+    assert(memory_alloc(SIZE_MAX) == NULL);
+    assert(memory_alloc(SIZE_MAX - 1U) == NULL);
+
+    allocation = memory_alloc(64U);
+    assert(allocation != NULL);
+    assert_allocator_alignment(allocation);
+    memory_free(allocation);
+}
+
+static void test_null_free_is_a_noop(void)
+{
+    void *allocation;
+
+    memory_init();
+    allocation = memory_alloc(64U);
+    assert(allocation != NULL);
+
+    memory_free(NULL);
+
+    memory_free(allocation);
+    assert(memory_alloc(1900U) != NULL);
+}
+
 int main(void)
 {
 #ifdef TRICORE_TARGET
@@ -131,6 +160,8 @@ int main(void)
     test_minimum_allocation_and_split();
     test_heap_exhaustion();
     test_alignment_after_split_and_coalesce();
+    test_rejected_overflow_request_preserves_heap();
+    test_null_free_is_a_noop();
 
 #ifndef TRICORE_TARGET
     {

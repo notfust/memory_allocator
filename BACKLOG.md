@@ -15,9 +15,12 @@
     выравнивание после coalesce; 4-байтный contract должен быть подтверждён
     target CI с `tricore-gcc`.
 
-- [ ] Устранить undefined behavior и переполнения `size_t` в `alloc`/`free`.
+- [x] Устранить undefined behavior и переполнения `size_t` в `alloc`/`free`.
   - Эффект: предотвращает выход за границы heap при больших или некорректных запросах.
-  - Зависимости: безопасная арифметика размеров, проверка `NULL` до вычислений.
+  - Реализация: безопасные C99-предикаты перед выравниванием, сложением header/payload
+    и coalesce; переполняющий запрос отклоняется без изменения heap, а `memory_free(NULL)`
+    завершается до адресной арифметики. Валидация forged/interior pointer и double free
+    остаётся отдельным следующим Critical-пунктом.
 
 - [ ] Защитить `free` от double free, forged pointer и interior pointer.
   - Эффект: исключает порчу metadata и overlapping allocations.
@@ -33,9 +36,11 @@
   - Эффект: упрощает переносимость между host и AURIX.
   - Зависимости: реорганизация файлов, выделение target-specific кода.
 
-- [ ] Добавить GNU Makefile для host и target, debug и release.
+- [x] Добавить GNU Makefile для host и target, debug и release.
   - Эффект: обеспечивает воспроизводимую сборку и раннее выявление регрессий.
-  - Зависимости: выбор компиляторов, флаги предупреждений, отдельные цели.
+  - Реализация: корневой `Makefile` содержит host-цели `debug`, `release`,
+    `test-host` и `test-sanitize`, а также `target-debug`/`target-release`
+    через `tricore-gcc`; build artifacts размещаются в `build/`.
 
 - [ ] Создать host-тесты для корректности, boundary cases и fragmentation.
   - Эффект: покрывает split/coalesce, exhaustion, repeated patterns и invalid inputs.
