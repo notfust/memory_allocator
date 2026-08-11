@@ -93,17 +93,43 @@ static void block_store(uint8_t *address, const memory_block_t *block)
     copy_bytes(address, block, sizeof(*block)); 
 }
 
-/** \brief Align size to the nearest multiple of align bytes
+/** \brief Add two sizes with overflow detection
  *
- * \param size Size to align
- * \param align Alignment in bytes
- * \return Aligned size
+ * \param left First operand
+ * \param right Second operand
+ * \param result Destination for the sum
+ * \return true if the sum fits in size_t
  * \private
  */
-static size_t align_size(size_t size, size_t align)
+static bool add_sizes(size_t left, size_t right, size_t *result)
 {
-    size_t remainder = size % align;
-    return (remainder == 0) ? (size) : (size + (align - remainder));
+    if (result == NULL || left > (SIZE_MAX - right)) { return false; }
+
+    *result = left + right;
+
+    return true;
+}
+
+/** \brief Align a size to the allocator alignment contract
+ *
+ * \param size Size to align
+ * \param aligned_size Destination for the aligned result
+ * \return true if alignment succeeds without size_t overflow
+ * \private
+ */
+static bool align_allocator_size(size_t size, size_t *aligned_size)
+{
+    size_t remainder;
+
+    if (aligned_size == NULL) { return false; }
+
+    remainder = size % MEMORY_ALLOCATOR_ALIGNMENT;
+    if (remainder == 0U) {
+        *aligned_size = size;
+        return true;
+    }
+
+    return add_sizes(size, MEMORY_ALLOCATOR_ALIGNMENT - remainder, aligned_size);
 }
 
 /** \brief Get the padded size of a block header
@@ -111,45 +137,59 @@ static size_t align_size(size_t size, size_t align)
  * Padding the header ensures that the first payload byte remains aligned even
  * when sizeof(memory_block_t) is not a multiple of the allocator alignment.
  *
- * \return Header size including trailing alignment padding
+ * \param header_size Destination for header size including trailing padding
+ * \return true if the header size fits in size_t
  * \private
  */
-static size_t block_header_size(void)
-{ 
-    return align_size(sizeof(memory_block_t), MEMORY_ALLOCATOR_ALIGNMENT); 
+static bool block_header_size(size_t *header_size)
+{
+    return align_allocator_size(sizeof(memory_block_t), header_size);
 }
 
 /** \brief Calculate the total size of a memory block including header
  *
  * \param data_size Size of user data in bytes
- * \return Total block size including header
+ * \param total_size Destination for total block size
+ * \return true if the total size fits in size_t
  * \private
  */
-static size_t block_total_size(size_t data_size)
-{ 
-    return block_header_size() + data_size; 
+static bool block_total_size(size_t data_size, size_t *total_size)
+{
+    size_t header_size;
+
+    if (!block_header_size(&header_size)) { return false; }
+
+    return add_sizes(header_size, data_size, total_size);
 }
 
 /** \brief Get pointer to user data area from a block header address
  * \private
  */
 static void *block_data_ptr(uint8_t *block_address)
-{ 
-    return (void *)(block_address + block_header_size()); 
+{
+    size_t header_size;
+
+    if (!block_header_size(&header_size)) { return NULL; }
+
+    return (void *)(block_address + header_size);
 }
 
 /** \brief Validate and read a memory block header
  *
  * \param address Address of the candidate block header
  * \param block Destination for the copied header
- * \return TRUE if the header belongs to the heap and has valid magic
+ * \return true if the header belongs to the heap and has valid magic
  * \private
  */
 static bool is_valid_block(const uint8_t *address, memory_block_t *block)
 {
+    size_t header_size;
+
     if (address == NULL || block == NULL) { return FALSE; }
 
-    if (address < heap_storage.bytes || address + block_header_size() > heap_storage.bytes + HEAP_SIZE) { return FALSE; }
+    if (!block_header_size(&header_size)) { return FALSE; }
+
+    if (address < heap_storage.bytes || address + header_size > heap_storage.bytes + HEAP_SIZE) { return FALSE; }
 
     block_load(address, block);
 
@@ -163,9 +203,15 @@ static bool is_valid_block(const uint8_t *address, memory_block_t *block)
 void memory_init(void)
 {
     memory_block_t first = { 0 };
+    size_t         header_size;
+
+    if (!block_header_size(&header_size) || header_size > HEAP_SIZE) {
+        first_block = NULL;
+        return;
+    }
 
     first.magic   = BLOCK_MAGIC;
-    first.size    = HEAP_SIZE - block_header_size();
+    first.size    = HEAP_SIZE - header_size;
     first.is_free = TRUE;
     first.next    = NULL;
     first.prev    = NULL;
@@ -177,10 +223,14 @@ void memory_init(void)
 void *memory_alloc(size_t size)
 {
     uint8_t *current_address;
+    size_t   minimum_block_size;
 
     if (size == 0 || first_block == NULL) { return NULL; }
 
-    size            = align_size(size, MEMORY_ALLOCATOR_ALIGNMENT);
+    if (!align_allocator_size(size, &size)) { return NULL; }
+
+    if (!block_total_size(MIN_USEFUL_SIZE, &minimum_block_size)) { return NULL; }
+
     current_address = first_block;
 
     while (current_address != NULL) {
@@ -189,12 +239,19 @@ void *memory_alloc(size_t size)
         block_load(current_address, &current);
 
         if (current.is_free && current.size >= size) {
-            if (current.size > size + block_total_size(MIN_USEFUL_SIZE)) {
-                uint8_t       *next_address = current_address + block_total_size(size);
+            size_t remaining_size = current.size - size;
+
+            if (remaining_size > minimum_block_size) {
+                size_t         allocated_block_size;
+                uint8_t       *next_address;
                 memory_block_t next         = { 0 };
 
+                if (!block_total_size(size, &allocated_block_size)) { return NULL; }
+
+                next_address = current_address + allocated_block_size;
+
                 next.magic   = BLOCK_MAGIC;
-                next.size    = current.size - block_total_size(size);
+                next.size    = current.size - allocated_block_size;
                 next.is_free = TRUE;
                 next.next    = current.next;
                 next.prev    = current_address;
@@ -231,10 +288,14 @@ void memory_free(void *ptr)
 {
     uint8_t       *block_address;
     memory_block_t block;
+    size_t         header_size;
+    bool           neighbours_changed = false;
 
     if (ptr == NULL) { return; }
 
-    block_address = (uint8_t *)ptr - block_header_size();
+    if (!block_header_size(&header_size)) { return; }
+
+    block_address = (uint8_t *)ptr - header_size;
 
     if (!is_valid_block(block_address, &block)) { return; }
 
@@ -244,20 +305,18 @@ void memory_free(void *ptr)
         memory_block_t previous;
 
         if (is_valid_block(block.prev, &previous) && previous.is_free) {
-            previous.size += block_total_size(block.size);
-            previous.next  = block.next;
+            size_t block_size_with_header;
+            size_t merged_size;
+            uint8_t *next_address = block.next;
 
-            if (block.next != NULL) {
-                memory_block_t next;
-
-                block_load(block.next, &next);
-                next.prev = block.prev;
-                block_store(block.next, &next);
-            }
+            if (!block_total_size(block.size, &block_size_with_header) || !add_sizes(previous.size, block_size_with_header, &merged_size)) { return; }
 
             block_address = block.prev;
             block         = previous;
-            block_store(block_address, &block);
+            block.size    = merged_size;
+            block.is_free = TRUE;
+            block.next    = next_address;
+            neighbours_changed = true;
         }
     }
 
@@ -265,17 +324,23 @@ void memory_free(void *ptr)
         memory_block_t next;
 
         if (is_valid_block(block.next, &next) && next.is_free) {
-            block.size += block_total_size(next.size);
-            block.next  = next.next;
+            size_t next_size_with_header;
+            size_t merged_size;
 
-            if (block.next != NULL) {
-                memory_block_t following;
+            if (!block_total_size(next.size, &next_size_with_header) || !add_sizes(block.size, next_size_with_header, &merged_size)) { return; }
 
-                block_load(block.next, &following);
-                following.prev = block_address;
-                block_store(block.next, &following);
-            }
+            block.size = merged_size;
+            block.next = next.next;
+            neighbours_changed = true;
         }
+    }
+
+    if (neighbours_changed && block.next != NULL) {
+        memory_block_t following;
+
+        block_load(block.next, &following);
+        following.prev = block_address;
+        block_store(block.next, &following);
     }
 
     block_store(block_address, &block);
